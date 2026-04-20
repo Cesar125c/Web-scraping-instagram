@@ -1,198 +1,229 @@
-import instaloader   # Librería para interactuar con Instagram
-import os            # Manejo de carpetas y archivos
-import json          # Guardar datos en formato JSON
-import time          # Para controlar tiempos (evitar bloqueos)
-import re            # Expresiones regulares (hashtags y menciones)
+import instaloader  # Librería para interactuar con Instagram (scraping)
+import os           # Manejo de archivos y carpetas del sistema
+import json         # Guardar datos en formato JSON
+import time         # Controlar pausas (evitar bloqueos)
+import re           # Expresiones regulares (analizar texto)
 
-print("="*50)
-print("🚀 INSTAGRAM SCRAPER + ANALYTICS")
-print("="*50)
 
-# Instrucción para obtener cookies desde el navegador
-print("\n📌 F12 → Application → Cookies → instagram.com")
+# ─────────────────────────────
+# LOGIN (AUTENTICACIÓN)
+# ─────────────────────────────
+def login(usuario, sessionid, csrftoken, ds_user_id):
+    # Crear instancia principal de Instaloader
+    loader = instaloader.Instaloader(quiet=True)
 
-# ─── INPUT DEL USUARIO ─────────────────────────────
-# Credenciales (cookies)
-usuario = input("\n👤 Usuario: ").strip()
-sessionid = input("🔐 sessionid: ").strip()
-csrftoken = input("🔑 csrftoken: ").strip()
-ds_user_id = input("🆔 ds_user_id (opcional): ").strip()
+    # Cookies necesarias para simular sesión activa
+    cookies = {
+        "sessionid": sessionid,   # Identifica la sesión del usuario (clave principal)
+        "csrftoken": csrftoken,   # Token de seguridad contra ataques CSRF
+        "ds_user_id": ds_user_id  # ID interno del usuario (refuerza autenticación)
+    }
 
-# Parámetros del scraping
-objetivo = input("\n🎯 Usuario a scrapear: ").strip().replace('@', '')
-limite_posts = int(input("📸 Número de posts: ") or 3)
-limite_seguidores = int(input("👥 Número de seguidores: ") or 10)
+    # Cargar sesión manualmente usando cookies (sin contraseña)
+    loader.load_session(usuario, cookies)
 
-# ─── LOGIN ─────────────────────────────
-# Inicializa el objeto principal de Instaloader
-loader = instaloader.Instaloader(quiet=True)
+    # Verificar si la sesión es válida
+    if not loader.test_login():
+        raise Exception("❌ Error de autenticación")
 
-# Se crean las cookies necesarias para autenticación
-cookies = {"sessionid": sessionid, "csrftoken": csrftoken}
+    print(f"\n✅ Sesión activa: @{usuario}")
+    return loader  # Retornamos el objeto autenticado
 
-# Si existe ds_user_id se agrega (mejora estabilidad)
-if ds_user_id:
-    cookies["ds_user_id"] = ds_user_id
 
-# Se carga la sesión manualmente usando cookies
-loader.load_session(usuario, cookies)
+# ─────────────────────────────
+# OBTENER PERFIL
+# ─────────────────────────────
+def obtener_perfil(loader, objetivo):
+    # Obtiene el perfil usando el contexto autenticado
+    return instaloader.Profile.from_username(loader.context, objetivo)
 
-# Se verifica si la sesión es válida
-if not loader.test_login():
-    print("\n❌ Error de autenticación")
-    exit()
 
-print(f"\n✅ Sesión activa: @{usuario}")
+# ─────────────────────────────
+# PROCESAR POSTS
+# ─────────────────────────────
+def procesar_posts(perfil, loader, limite_posts, img_dir):
+    data_posts = []  # Lista donde se guardarán los datos
 
-# ─── OBTENER PERFIL ─────────────────────
-# Se obtiene el perfil del usuario objetivo
-perfil = instaloader.Profile.from_username(loader.context, objetivo)
+    print("\n" + "="*50)
+    print(f"📸 PROCESANDO {limite_posts} POSTS")
+    print("="*50)
 
-# Mostrar información básica del perfil
-print("\n" + "="*50)
-print("📊 PERFIL")
-print("="*50)
-print(f"👤 @{perfil.username}")
-print(f"📛 {perfil.full_name or '—'}")
-print(f"👥 {perfil.followers:,} seguidores")
-print(f"📸 {perfil.mediacount:,} posts")
-print(f"🔒 Privado: {'Sí' if perfil.is_private else 'No'}")
+    # Recorremos los posts del perfil
+    for i, post in enumerate(perfil.get_posts(), 1):
 
-# ─── CREAR CARPETAS ─────────────────────
-# Carpeta base donde se guardarán datos
-base_dir = f"data_{objetivo}"
-
-# Carpeta específica para imágenes
-img_dir = os.path.join(base_dir, "images")
-
-# Crea la carpeta si no existe
-os.makedirs(img_dir, exist_ok=True)
-
-# Lista donde se almacenarán los posts
-data_posts = []
-
-# ─── PROCESAR POSTS ─────────────────────
-print("\n" + "="*50)
-print(f"📸 PROCESANDO {limite_posts} POSTS")
-print("="*50)
-
-# Iterar sobre los posts del perfil
-for i, post in enumerate(perfil.get_posts(), 1):
-
-    # Limitar número de posts
-    if i > limite_posts:
-        break
-
-    # Determinar tipo de contenido
-    tipo = "video" if post.is_video else "imagen"
-
-    # Mostrar info básica en consola
-    print(f"\n[{i}] {'🎥 Video' if post.is_video else '📷 Imagen'}")
-    print(f"❤️ {post.likes:,}  💬 {post.comments:,}")
-    print(f"🔗 https://instagram.com/p/{post.shortcode}/")
-
-    # ─── CAPTION ────────────────────────
-    # Obtener texto del post, limpiar saltos de línea
-    caption = (post.caption or "").replace("\n", " ").strip()
-
-    # Mostrar caption completo
-    if caption:
-        print(f"📝 {caption}")
-    else:
-        print("📝 Sin descripción")
-
-    # ─── ANALISIS DE TEXTO ──────────────
-    # Extraer hashtags (#algo)
-    hashtags = re.findall(r"#(\w+)", caption)
-
-    # Extraer menciones (@usuario)
-    menciones = re.findall(r"@(\w+)", caption)
-
-    # Contar elementos
-    total_hashtags = len(hashtags)
-    total_menciones = len(menciones)
-
-    # Mostrar resultados
-    print(f"🏷️ Hashtags ({total_hashtags}): {hashtags}")
-    print(f"👤 Menciones ({total_menciones}): {menciones}")
-
-    # Variable para guardar ruta de imagen
-    img_path = None
-
-    # ─── DESCARGA DE IMÁGENES ───────────
-    # Solo descarga si NO es video
-    if not post.is_video:
-
-        # Nombre del archivo basado en shortcode (único)
-        filename = os.path.join(img_dir, f"{post.shortcode}.jpg")
-
-        # Evitar descargar si ya existe
-        if not os.path.exists(filename):
-            try:
-                # Descargar imagen
-                loader.download_pic(filename, post.url, post.date_utc)
-                print("⬇️ Imagen descargada")
-            except:
-                print("⚠️ Error imagen")
-
-        # Guardar ruta de imagen
-        img_path = filename
-
-    # ─── GUARDAR DATOS DEL POST ─────────
-    data_posts.append({
-        "id": post.shortcode,
-        "tipo": tipo,
-        "likes": post.likes,
-        "comentarios": post.comments,
-        "caption": caption,
-        "hashtags": hashtags,
-        "menciones": menciones,
-        "total_hashtags": total_hashtags,
-        "total_menciones": total_menciones,
-        "url": f"https://instagram.com/p/{post.shortcode}/",
-        "imagen_local": img_path
-    })
-
-    # Pausa para evitar bloqueo por demasiadas requests
-    time.sleep(1)
-
-# ─── SEGUIDORES ─────────────────────────
-seguidores = []
-
-print("\n" + "="*50)
-print(f"👥 PRIMEROS {limite_seguidores} SEGUIDORES")
-print("="*50)
-
-try:
-    # Iterar seguidores
-    for i, f in enumerate(perfil.get_followers(), 1):
-
-        # Limitar cantidad
-        if i > limite_seguidores:
+        # Limitar cantidad de posts
+        if i > limite_posts:
             break
 
-        # Mostrar en consola
-        print(f"[{i}] @{f.username}")
+        # Determinar si es video o imagen
+        tipo = "video" if post.is_video else "imagen"
 
-        # Guardar en lista
-        seguidores.append(f.username)
+        # Mostrar información básica
+        print(f"\n[{i}] {'🎥 Video' if post.is_video else '📷 Imagen'}")
+        print(f"❤️ {post.likes:,}  💬 {post.comments:,}")
+        print(f"🔗 https://instagram.com/p/{post.shortcode}/")
 
-except:
-    print("⚠️ No se pudieron obtener seguidores")
+        # ─── CAPTION ────────────────────────
+        # Obtener texto, evitar None y limpiar saltos de línea
+        caption = (post.caption or "").replace("\n", " ").strip()
 
-# ─── GUARDAR JSON ──────────────────────
-data = {
-    "usuario": objetivo,
-    "posts": data_posts,
-    "seguidores": seguidores
-}
+        print(f"📝 {caption if caption else 'Sin descripción'}")
 
-# Guardar archivo JSON
-with open(f"{base_dir}/data.json", "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=4, ensure_ascii=False)
+        # ─── ANALISIS DE TEXTO ──────────────
+        # Buscar hashtags (#algo)
+        hashtags = re.findall(r"#(\w+)", caption)
 
-print(f"\n💾 Guardado en {base_dir}/data.json")
+        # Buscar menciones (@usuario)
+        menciones = re.findall(r"@(\w+)", caption)
 
-print("\n" + "="*50)
-print("✅ COMPLETADO")
-print("="*50)
+        # Mostrar resultados del análisis
+        print(f"🏷️ Hashtags ({len(hashtags)}): {hashtags}")
+        print(f"👤 Menciones ({len(menciones)}): {menciones}")
+
+        img_path = None  # Ruta de imagen local (si existe)
+
+        # ─── DESCARGA DE IMÁGENES ───────────
+        if not post.is_video:  # Solo descargar imágenes
+
+            # Crear nombre único usando shortcode del post
+            filename = os.path.join(img_dir, f"{post.shortcode}.jpg")
+
+            # Evitar descargar si ya existe el archivo
+            if not os.path.exists(filename):
+                try:
+                    loader.download_pic(filename, post.url, post.date_utc)
+                    print("⬇️ Imagen descargada")
+                except Exception as e:
+                    print(f"⚠️ Error imagen: {e}")
+
+            img_path = filename  # Guardar ruta
+
+        # Guardar toda la información del post
+        data_posts.append({
+            "id": post.shortcode,
+            "tipo": tipo,
+            "likes": post.likes,
+            "comentarios": post.comments,
+            "caption": caption,
+            "hashtags": hashtags,
+            "menciones": menciones,
+            "total_hashtags": len(hashtags),
+            "total_menciones": len(menciones),
+            "url": f"https://instagram.com/p/{post.shortcode}/",
+            "imagen_local": img_path
+        })
+
+        # Pausa para evitar bloqueo por demasiadas peticiones
+        time.sleep(1)
+
+    return data_posts
+
+
+# ─────────────────────────────
+# OBTENER SEGUIDORES
+# ─────────────────────────────
+def obtener_seguidores(perfil, limite):
+    seguidores = []
+
+    print("\n" + "="*50)
+    print(f"👥 PRIMEROS {limite} SEGUIDORES")
+    print("="*50)
+
+    try:
+        # Recorrer seguidores
+        for i, f in enumerate(perfil.get_followers(), 1):
+
+            if i > limite:
+                break
+
+            print(f"[{i}] @{f.username}")
+            seguidores.append(f.username)
+
+    except Exception as e:
+        print(f"⚠️ Error obteniendo seguidores: {e}")
+
+    return seguidores
+
+
+# ─────────────────────────────
+# GUARDAR JSON
+# ─────────────────────────────
+def guardar_json(base_dir, objetivo, posts, seguidores):
+    # Estructura final de datos
+    data = {
+        "usuario": objetivo,
+        "posts": posts,
+        "seguidores": seguidores
+    }
+
+    # Guardar en archivo JSON
+    with open(f"{base_dir}/data.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+    print(f"\n💾 Guardado en {base_dir}/data.json")
+
+
+# ─────────────────────────────
+# MAIN (FLUJO PRINCIPAL)
+# ─────────────────────────────
+def main():
+    print("="*50)
+    print("🚀 INSTAGRAM SCRAPER + ANALYTICS (PRO)")
+    print("="*50)
+
+    print("\n📌 F12 → Application → Cookies → instagram.com")
+
+    # ─── INPUT ─────────────────────────
+    usuario = input("\n👤 Usuario: ").strip()
+    sessionid = input("🔐 sessionid: ").strip()
+    csrftoken = input("🔑 csrftoken: ").strip()
+    ds_user_id = input("🆔 ds_user_id: ").strip()
+
+    objetivo = input("\n🎯 Usuario a scrapear: ").strip().replace('@', '')
+    limite_posts = int(input("📸 Número de posts: ") or 3)
+    limite_seguidores = int(input("👥 Número de seguidores: ") or 10)
+
+    try:
+        # LOGIN
+        loader = login(usuario, sessionid, csrftoken, ds_user_id)
+
+        # PERFIL
+        perfil = obtener_perfil(loader, objetivo)
+
+        print("\n" + "="*50)
+        print("📊 PERFIL")
+        print("="*50)
+        print(f"👤 @{perfil.username}")
+        print(f"📛 {perfil.full_name or '—'}")
+        print(f"👥 {perfil.followers:,} seguidores")
+        print(f"📸 {perfil.mediacount:,} posts")
+        print(f"🔒 Privado: {'Sí' if perfil.is_private else 'No'}")
+
+        # ─── CREAR CARPETAS ─────────────
+        base_dir = f"data_{objetivo}"
+        img_dir = os.path.join(base_dir, "images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        # POSTS
+        posts = procesar_posts(perfil, loader, limite_posts, img_dir)
+
+        # SEGUIDORES
+        seguidores = obtener_seguidores(perfil, limite_seguidores)
+
+        # GUARDAR RESULTADOS
+        guardar_json(base_dir, objetivo, posts, seguidores)
+
+        print("\n" + "="*50)
+        print("✅ COMPLETADO")
+        print("="*50)
+
+    except Exception as e:
+        print(f"\n❌ ERROR GENERAL: {e}")
+
+
+# ─────────────────────────────
+# EJECUCIÓN DEL PROGRAMA
+# ─────────────────────────────
+if __name__ == "__main__":
+    # Solo se ejecuta si el archivo se corre directamente
+    main()
